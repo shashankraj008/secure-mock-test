@@ -3,108 +3,123 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Secure Assessment Portal</title>
+  <title>Assessment & Learning Portal</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f8; margin: 0; padding: 20px; }
-    .card { background: white; max-width: 650px; margin: 30px auto; padding: 25px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; margin: 0; padding: 20px; color: #333; }
+    .card { background: white; max-width: 700px; margin: 20px auto; padding: 25px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
     .hidden { display: none; }
-    .btn { background: #0066cc; color: white; border: none; padding: 10px 18px; border-radius: 4px; cursor: pointer; font-size: 15px; }
-    .btn:hover { background: #0052a3; }
+    .btn { background: #0066cc; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500; }
+    .btn:hover { background: #004d99; }
     .btn-danger { background: #d32f2f; }
     .input-field { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-    .warning { color: #d32f2f; font-weight: bold; margin: 10px 0; }
-    .question-block { margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
-    #timer { font-size: 20px; font-weight: bold; color: #d32f2f; }
+    .badge-correct { color: #2e7d32; font-weight: bold; }
+    .badge-wrong { color: #c62828; font-weight: bold; }
+    .solution-box { border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px; margin-bottom: 12px; background: #fafafa; }
+    .test-card { border: 1px solid #ddd; padding: 12px; margin: 8px 0; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
   </style>
 </head>
 <body>
 
-  <!-- Auth Screen -->
+  <!-- AUTH SCREEN -->
   <div id="authView" class="card">
-    <h2>Secure Mock Test Portal</h2>
-    <div id="authForm">
-      <input type="text" id="username" class="input-field" placeholder="Username" required />
-      <input type="password" id="password" class="input-field" placeholder="Password" required />
-      <div style="margin-top: 10px;">
-        <button class="btn" onclick="login()">Login</button>
-        <button class="btn" style="background: #4caf50;" onclick="register()">Register</button>
-      </div>
+    <h2>Student Portal Login</h2>
+    <input type="text" id="username" class="input-field" placeholder="Username" />
+    <input type="password" id="password" class="input-field" placeholder="Password" />
+    <div style="margin-top: 10px;">
+      <button class="btn" onclick="auth('login')">Login</button>
+      <button class="btn" style="background:#2e7d32;" onclick="auth('register')">Register</button>
     </div>
   </div>
 
-  <!-- Dashboard -->
+  <!-- DASHBOARD: AVAILABLE TESTS & PROGRESS -->
   <div id="dashboardView" class="card hidden">
     <h2>Welcome, <span id="userDisplay"></span></h2>
-    <p>Exam Instructions:</p>
-    <ul>
-      <li>The assessment requires Fullscreen mode.</li>
-      <li>Switching tabs or minimizing the browser triggers violation warnings.</li>
-      <li>Submissions after the server-side deadline are rejected.</li>
-    </ul>
-    <button class="btn" onclick="startTest()">Start Test (Fullscreen)</button>
+    
+    <h3>Available Mock Tests</h3>
+    <div id="testList"></div>
+
+    <h3 style="margin-top: 30px;">Your Attempt History</h3>
+    <div id="historyList"><p>No previous tests found.</p></div>
   </div>
 
-  <!-- Assessment View -->
+  <!-- TEST VIEW -->
   <div id="testView" class="card hidden">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-      <h3 id="testTitle">Assessment</h3>
-      <div id="timer">00:00</div>
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <h3 id="testTitle">Test</h3>
+      <div id="timer" style="font-size: 20px; font-weight: bold; color: #d32f2f;">00:00</div>
     </div>
-    <div id="warnings" class="warning"></div>
-    <hr/>
-    <form id="testForm"></form>
+    <form id="testForm" style="margin: 20px 0;"></form>
     <button class="btn btn-danger" onclick="submitTest()">Submit Assessment</button>
   </div>
 
-  <!-- Results Screen -->
-  <div id="resultView" class="card hidden">
-    <h2>Assessment Results</h2>
+  <!-- SOLUTION REVIEW SCREEN -->
+  <div id="solutionView" class="card hidden">
+    <h2>Performance & Solutions</h2>
     <h3 id="scoreDisplay"></h3>
-    <div id="reviewContainer"></div>
+    <div id="solutionContainer"></div>
+    <button class="btn" style="margin-top: 15px;" onclick="returnToDashboard()">Back to Dashboard</button>
   </div>
 
   <script>
     let token = "";
-    let testId = "test-101";
+    let activeTestId = "";
     let timerInterval = null;
-    let infractionCount = 0;
 
-    async function register() {
+    async function auth(type) {
       const u = document.getElementById('username').value;
       const p = document.getElementById('password').value;
-      const res = await fetch('/api/register', {
+      const res = await fetch(`/api/${type}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: u, password: p })
       });
       const data = await res.json();
-      alert(data.message || data.error);
-    }
-
-    async function login() {
-      const u = document.getElementById('username').value;
-      const p = document.getElementById('password').value;
-      const res = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: u, password: p })
-      });
-      const data = await res.json();
-      if (res.ok) {
+      if (res.ok && type === 'login') {
         token = data.token;
         document.getElementById('userDisplay').innerText = data.username;
         document.getElementById('authView').classList.add('hidden');
         document.getElementById('dashboardView').classList.remove('hidden');
+        loadDashboard();
       } else {
-        alert(data.error);
+        alert(data.message || data.error);
       }
     }
 
-    async function startTest() {
-      if (document.documentElement.requestFullscreen) {
-        await document.documentElement.requestFullscreen().catch(() => {});
-      }
+    async function loadDashboard() {
+      // 1. Fetch available mock tests
+      const testRes = await fetch('/api/tests', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const tests = await testRes.json();
+      const listEl = document.getElementById('testList');
+      listEl.innerHTML = tests.map(t => `
+        <div class="test-card">
+          <div>
+            <strong>${t.title}</strong><br/>
+            <small>${t.durationMinutes} mins | ${t.totalQuestions} Questions</small>
+          </div>
+          <button class="btn" onclick="startTest('${t.id}')">Start Test</button>
+        </div>
+      `).join('');
 
+      // 2. Fetch student progress
+      const progRes = await fetch('/api/user/progress', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const history = await progRes.json();
+      const histEl = document.getElementById('historyList');
+      if (history.length > 0) {
+        histEl.innerHTML = history.map(h => `
+          <div style="border-bottom: 1px solid #eee; padding: 8px 0;">
+            <strong>${h.testTitle}</strong>: ${h.score}/${h.total} (${h.percentage}%)
+            <span style="float:right; font-size:12px; color:#666;">${new Date(h.submittedAt).toLocaleDateString()}</span>
+          </div>
+        `).join('');
+      }
+    }
+
+    async function startTest(testId) {
+      activeTestId = testId;
       const res = await fetch('/api/test/start', {
         method: 'POST',
         headers: {
@@ -113,84 +128,48 @@
         },
         body: JSON.stringify({ testId })
       });
-
       const data = await res.json();
-      if (!res.ok) {
-        alert(data.error);
-        return;
-      }
+      if (!res.ok) return alert(data.error);
 
       document.getElementById('dashboardView').classList.add('hidden');
       document.getElementById('testView').classList.remove('hidden');
       document.getElementById('testTitle').innerText = data.title;
 
-      renderQuestions(data.questions);
-      startTimer(data.expiresAt);
-      setupProctoring();
-    }
-
-    function renderQuestions(questions) {
       const form = document.getElementById('testForm');
-      form.innerHTML = "";
-      questions.forEach((q, qIndex) => {
-        const div = document.createElement('div');
-        div.className = "question-block";
-        div.innerHTML = `<p><strong>Q${qIndex + 1}: ${q.text}</strong></p>`;
-        
-        q.options.forEach((opt, oIndex) => {
-          div.innerHTML += `
-            <label style="display: block; margin: 6px 0;">
-              <input type="radio" name="${q.id}" value="${oIndex}"> ${opt}
+      form.innerHTML = data.questions.map((q, i) => `
+        <div style="margin-bottom: 15px;">
+          <p><strong>${i+1}. ${q.text}</strong></p>
+          ${q.options.map((opt, idx) => `
+            <label style="display:block; margin: 4px 0;">
+              <input type="radio" name="${q.id}" value="${idx}"> ${opt}
             </label>
-          `;
-        });
-        form.appendChild(div);
-      });
+          `).join('')}
+        </div>
+      `).join('');
+
+      runTimer(data.expiresAt);
     }
 
-    function setupProctoring() {
-      document.addEventListener("visibilitychange", () => {
-        if (document.hidden) {
-          infractionCount++;
-          document.getElementById('warnings').innerText = 
-            `Warning: Tab switch or minimization detected! (${infractionCount}/3)`;
-          if (infractionCount >= 3) {
-            alert("Maximum infractions reached. Auto-submitting test.");
-            submitTest();
-          }
-        }
-      });
-
-      document.addEventListener("contextmenu", e => e.preventDefault());
-      document.addEventListener("copy", e => e.preventDefault());
-    }
-
-    function startTimer(expiresAt) {
+    function runTimer(expiresAt) {
       timerInterval = setInterval(() => {
-        const remaining = expiresAt - Date.now();
-        if (remaining <= 0) {
+        const left = expiresAt - Date.now();
+        if (left <= 0) {
           clearInterval(timerInterval);
-          alert("Time is up! Submitting answers...");
           submitTest();
           return;
         }
-
-        const mins = Math.floor((remaining % (1000 * 60 * 60)) / (1000 * 60));
-        const secs = Math.floor((remaining % (1000 * 60)) / 1000);
-        document.getElementById('timer').innerText = 
-          `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        const m = Math.floor(left / 60000);
+        const s = Math.floor((left % 60000) / 1000);
+        document.getElementById('timer').innerText = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
       }, 1000);
     }
 
     async function submitTest() {
       clearInterval(timerInterval);
-
       const form = document.getElementById('testForm');
       const formData = new FormData(form);
       const answers = {};
-      for (const [key, value] of formData.entries()) {
-        answers[key] = parseInt(value, 10);
-      }
+      for (let [k, v] of formData.entries()) answers[k] = parseInt(v, 10);
 
       const res = await fetch('/api/test/submit', {
         method: 'POST',
@@ -198,19 +177,33 @@
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ testId, answers })
+        body: JSON.stringify({ testId: activeTestId, answers })
       });
+      const result = await res.json();
 
-      const data = await res.json();
-      if (res.ok) {
-        if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
-        document.getElementById('testView').classList.add('hidden');
-        document.getElementById('resultView').classList.remove('hidden');
-        document.getElementById('scoreDisplay').innerText = 
-          `Score: ${data.score} / ${data.total} (${data.percentage}%)`;
-      } else {
-        alert(data.error);
-      }
+      document.getElementById('testView').classList.add('hidden');
+      document.getElementById('solutionView').classList.remove('hidden');
+      document.getElementById('scoreDisplay').innerText = 
+        `Score: ${result.score} / ${result.total} (${result.percentage}%)`;
+
+      // Render solutions and explanations
+      const container = document.getElementById('solutionContainer');
+      container.innerHTML = result.review.map((item, index) => `
+        <div class="solution-box">
+          <p><strong>Q${index + 1}: ${item.question}</strong></p>
+          <p>Your Answer: <span class="${item.isCorrect ? 'badge-correct' : 'badge-wrong'}">${item.selectedAnswer}</span></p>
+          ${!item.isCorrect ? `<p>Correct Answer: <span class="badge-correct">${item.correctAnswer}</span></p>` : ''}
+          <div style="background: #eef2f7; padding: 8px; border-radius: 4px; font-size: 13px;">
+            <strong>Explanation:</strong> ${item.explanation}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function returnToDashboard() {
+      document.getElementById('solutionView').classList.add('hidden');
+      document.getElementById('dashboardView').classList.remove('hidden');
+      loadDashboard();
     }
   </script>
 </body>
