@@ -7,14 +7,15 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Secret key from Vercel environment variables or fallback
-const SECRET_KEY = process.env.JWT_SECRET || "vercel_default_production_key_mock_test";
+const SECRET_KEY = process.env.JWT_SECRET || "mock_test_secret_2026";
+const ADMIN_API_KEY = process.env.ADMIN_KEY || "admin_secret_key_123";
 
-// In-memory data structures
+// In-Memory Data (Replace with PostgreSQL/Supabase for production persistence)
 const USERS = [];
 const SESSIONS = new Map();
+const USER_HISTORY = new Map(); // userId -> Array of attempt records
 
-// Test questions: correctOption is kept server-side only
+// Master Question Bank
 const TEST_BANK = {
   "test-101": {
     id: "test-101",
@@ -25,25 +26,20 @@ const TEST_BANK = {
         id: "q1",
         text: "What is the time complexity of binary search in the worst case?",
         options: ["O(n)", "O(log n)", "O(n log n)", "O(1)"],
-        correctOption: 1
+        correctOption: 1,
+        explanation: "Binary search cuts the search space in half with each iteration, giving logarithmic time."
       },
       {
         id: "q2",
         text: "Which protocol is used for secure communication over the web?",
         options: ["HTTP", "FTP", "HTTPS", "SMTP"],
-        correctOption: 2
-      },
-      {
-        id: "q3",
-        text: "Which data structure follows the LIFO principle?",
-        options: ["Queue", "Stack", "Array", "Linked List"],
-        correctOption: 1
+        correctOption: 2,
+        explanation: "HTTPS encrypts normal HTTP communication over TLS/SSL."
       }
     ]
   }
 };
 
-// Auth middleware
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -56,86 +52,83 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// 1. User Registration
+// 1. Auth
 app.post('/api/register', async (req, res) => {
   const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ error: "Missing credentials" });
-
-  const existing = USERS.find(u => u.username === username);
-  if (existing) return res.status(400).json({ error: "User already exists" });
+  if (!username || !password) return res.status(400).json({ error: "Missing fields" });
+  if (USERS.find(u => u.username === username)) return res.status(400).json({ error: "User exists" });
 
   const hashedPassword = await bcrypt.hash(password, 10);
   const user = { id: `user_${Date.now()}`, username, password: hashedPassword };
   USERS.push(user);
-
-  res.status(201).json({ message: "User registered successfully" });
+  res.status(201).json({ message: "Registered successfully" });
 });
 
-// 2. User Login
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   const user = USERS.find(u => u.username === username);
   if (!user || !(await bcrypt.compare(password, user.password))) {
-    return res.status(401).json({ error: "Invalid username or password" });
+    return res.status(401).json({ error: "Invalid credentials" });
   }
-
   const token = jwt.sign({ id: user.id, username: user.username }, SECRET_KEY, { expiresIn: '2h' });
   res.json({ token, username: user.username });
 });
 
-// 3. Start Test
+// 2. Mock Test Operations: List Available Tests
+app.get('/api/tests', authenticateToken, (req, res) => {
+  const catalog = Object.values(TEST_BANK).map(t => ({
+    id: t.id,
+    title: t.title,
+    durationMinutes: t.durationMinutes,
+    totalQuestions: t.questions.length
+  }));
+  res.json(catalog);
+});
+
+// 3. Admin: Add New Mock Tests
+app.post('/api/admin/tests', (req, res) => {
+  const clientKey = req.headers['x-admin-key'];
+  if (clientKey !== ADMIN_API_KEY) {
+    return res.status(403).json({ error: "Unauthorized: Invalid admin key" });
+  }
+
+  const { id, title, durationMinutes, questions } = req.body;
+  if (!id || !title || !questions || !Array.isArray(questions)) {
+    return res.status(400).json({ error: "Malformed test payload" });
+  }
+
+  TEST_BANK[id] = { id, title, durationMinutes: durationMinutes || 10, questions };
+  res.status(201).json({ message: "Test created successfully", testId: id });
+});
+
+// 4. Start Test
 app.post('/api/test/start', authenticateToken, (req, res) => {
   const { testId } = req.body;
   const test = TEST_BANK[testId];
   if (!test) return res.status(404).json({ error: "Test not found" });
 
-  const existingSession = SESSIONS.get(req.user.id);
-  if (existingSession && existingSession.testId === testId && existingSession.completed) {
-    return res.status(403).json({ error: "Test already completed" });
-  }
-
   const startTime = Date.now();
-  const expiresAt = startTime + (test.durationMinutes * 60 * 1000) + 30000; // 30-sec network buffer
+  const expiresAt = startTime + (test.durationMinutes * 60 * 1000) + 30000;
 
-  SESSIONS.set(req.user.id, {
+  SESSIONS.set(`${req.user.id}_${testId}`, {
     testId,
     startTime,
     expiresAt,
     completed: false
   });
 
-  // Strip answers before sending to client
-  const clientQuestions = test.questions.map(({ id, text, options }) => ({
-    id,
-    text,
-    options
-  }));
-
-  res.json({
-    testId: test.id,
-    title: test.title,
-    durationMinutes: test.durationMinutes,
-    expiresAt,
-    questions: clientQuestions
-  });
+  const clientQuestions = test.questions.map(({ id, text, options }) => ({ id, text, options }));
+  res.json({ testId: test.id, title: test.title, expiresAt, questions: clientQuestions });
 });
 
-// 4. Submit Test
+// 5. Submit Test & Store Solution Record
 app.post('/api/test/submit', authenticateToken, (req, res) => {
   const { testId, answers } = req.body;
-  const session = SESSIONS.get(req.user.id);
+  const sessionKey = `${req.user.id}_${testId}`;
+  const session = SESSIONS.get(sessionKey);
 
-  if (!session || session.testId !== testId) {
-    return res.status(400).json({ error: "No active session for this test" });
-  }
-
-  if (session.completed) {
-    return res.status(400).json({ error: "Test already submitted" });
-  }
-
-  if (Date.now() > session.expiresAt) {
-    session.completed = true;
-    return res.status(403).json({ error: "Test submission rejected: Time expired" });
+  if (!session || session.completed) {
+    return res.status(400).json({ error: "Invalid or already submitted session" });
   }
 
   const test = TEST_BANK[testId];
@@ -149,22 +142,39 @@ app.post('/api/test/submit', authenticateToken, (req, res) => {
     if (isCorrect) score++;
 
     review.push({
-      id: q.id,
-      text: q.text,
-      userAnswer,
-      correctOption: q.correctOption,
-      isCorrect
+      question: q.text,
+      options: q.options,
+      selectedAnswer: userAnswer !== null ? q.options[userAnswer] : "Skipped",
+      correctAnswer: q.options[q.correctOption],
+      isCorrect,
+      explanation: q.explanation || "No explanation provided."
     });
   });
 
   session.completed = true;
 
-  res.json({
+  // Persist attempt history
+  const attemptRecord = {
+    testId,
+    testTitle: test.title,
+    submittedAt: new Date().toISOString(),
     score,
     total,
-    percentage: ((score / total) * 100).toFixed(2),
+    percentage: ((score / total) * 100).toFixed(1),
     review
-  });
+  };
+
+  const history = USER_HISTORY.get(req.user.id) || [];
+  history.push(attemptRecord);
+  USER_HISTORY.set(req.user.id, history);
+
+  res.json(attemptRecord);
+});
+
+// 6. Student Progress / Past Attempts
+app.get('/api/user/progress', authenticateToken, (req, res) => {
+  const history = USER_HISTORY.get(req.user.id) || [];
+  res.json(history);
 });
 
 module.exports = app;
