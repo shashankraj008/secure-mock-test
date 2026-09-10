@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin - Test & Question Manager</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; margin: 0; padding: 20px; color: #222; }
+    .container { max-width: 900px; margin: 0 auto; }
+    .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); margin-bottom: 20px; }
+    .hidden { display: none; }
+    .btn { background: #0066cc; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+    .btn:hover { background: #004d99; }
+    .btn-green { background: #2e7d32; }
+    .btn-danger { background: #c62828; }
+    .input-field { width: 100%; padding: 8px 12px; margin: 6px 0 12px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+    .question-card { background: #f9fbfd; border: 1px solid #dbe2ea; border-radius: 6px; padding: 15px; margin-bottom: 15px; position: relative; }
+    .row { display: flex; gap: 15px; }
+    .row > div { flex: 1; }
+    .badge { display: inline-block; padding: 2px 8px; font-size: 12px; background: #e3f2fd; color: #0d47a1; border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- Admin Login / Auth Key Screen -->
+    <div id="authBox" class="card">
+      <h2>Admin Portal</h2>
+      <p>Enter the master admin key to manage question banks.</p>
+      <input type="password" id="adminKey" class="input-field" placeholder="Admin Secret Key (e.g. admin_secret_key_123)" />
+      <button class="btn" onclick="authenticateAdmin()">Enter Dashboard</button>
+    </div>
+
+    <!-- Admin Main View -->
+    <div id="mainDashboard" class="hidden">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 15px;">
+        <h2>Assessment Management Dashboard</h2>
+        <button class="btn btn-green" onclick="openTestEditor()">+ Create New Test</button>
+      </div>
+
+      <!-- Test Catalog -->
+      <div class="card">
+        <h3>Existing Assessments</h3>
+        <div id="testCatalog">Loading tests...</div>
+      </div>
+
+      <!-- Editor Panel (Add / Update) -->
+      <div id="editorCard" class="card hidden">
+        <h3 id="editorHeading">Edit Test</h3>
+        
+        <div class="row">
+          <div>
+            <label><strong>Test ID (Unique identifier, e.g., 'math-101')</strong></label>
+            <input type="text" id="testIdInput" class="input-field" />
+          </div>
+          <div>
+            <label><strong>Duration (Minutes)</strong></label>
+            <input type="number" id="testDurationInput" class="input-field" value="10" />
+          </div>
+        </div>
+
+        <label><strong>Test Title</strong></label>
+        <input type="text" id="testTitleInput" class="input-field" placeholder="e.g. Advanced Data Structures" />
+
+        <hr style="margin: 20px 0; border: none; border-top: 1px solid #eee;" />
+
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
+          <h4>Questions and Answer Keys</h4>
+          <button class="btn" type="button" onclick="addQuestionCard()">+ Add Question</button>
+        </div>
+
+        <div id="questionsContainer"></div>
+
+        <div style="margin-top: 20px; display:flex; gap:10px;">
+          <button class="btn btn-green" onclick="saveTest()">Save Assessment</button>
+          <button class="btn" style="background:#6c757d;" onclick="closeEditor()">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let adminKey = "";
+    let isEditing = false;
+
+    async function authenticateAdmin() {
+      const key = document.getElementById('adminKey').value.trim();
+      if (!key) return alert("Please enter the admin key.");
+
+      const res = await fetch('/api/admin/tests', {
+        headers: { 'x-admin-key': key }
+      });
+
+      if (!res.ok) {
+        alert("Invalid Admin Key.");
+        return;
+      }
+
+      adminKey = key;
+      document.getElementById('authBox').classList.add('hidden');
+      document.getElementById('mainDashboard').classList.remove('hidden');
+      loadTests();
+    }
+
+    async function loadTests() {
+      const res = await fetch('/api/admin/tests', {
+        headers: { 'x-admin-key': adminKey }
+      });
+      const tests = await res.json();
+      const container = document.getElementById('testCatalog');
+
+      if (!tests || tests.length === 0) {
+        container.innerHTML = "<p>No tests created yet.</p>";
+        return;
+      }
+
+      container.innerHTML = tests.map(t => `
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee; padding: 12px 0;">
+          <div>
+            <strong>${t.title}</strong> <span class="badge">ID: ${t.id}</span><br/>
+            <small>${t.durationMinutes} mins | ${t.questions.length} questions</small>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn" onclick='editTest(${JSON.stringify(t).replace(/'/g, "&apos;")})'>Edit</button>
+            <button class="btn btn-danger" onclick="deleteTest('${t.id}')">Delete</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function openTestEditor() {
+      isEditing = false;
+      document.getElementById('editorHeading').innerText = "Create New Test";
+      document.getElementById('testIdInput').value = "";
+      document.getElementById('testIdInput').disabled = false;
+      document.getElementById('testTitleInput').value = "";
+      document.getElementById('testDurationInput').value = "10";
+      document.getElementById('questionsContainer').innerHTML = "";
+      addQuestionCard();
+      document.getElementById('editorCard').classList.remove('hidden');
+    }
+
+    function editTest(test) {
+      isEditing = true;
+      document.getElementById('editorHeading').innerText = `Editing: ${test.title}`;
+      document.getElementById('testIdInput').value = test.id;
+      document.getElementById('testIdInput').disabled = true; // Cannot alter ID on update
+      document.getElementById('testTitleInput').value = test.title;
+      document.getElementById('testDurationInput').value = test.durationMinutes;
+
+      const container = document.getElementById('questionsContainer');
+      container.innerHTML = "";
+      test.questions.forEach(q => addQuestionCard(q));
+
+      document.getElementById('editorCard').classList.remove('hidden');
+      window.scrollTo({ top: document.getElementById('editorCard').offsetTop, behavior: 'smooth' });
+    }
+
+    function addQuestionCard(data = null) {
+      const container = document.getElementById('questionsContainer');
+      const qIndex = container.children.length;
+      const qId = data ? data.id : `q_${Date.now()}_${Math.floor(Math.random()*100)}`;
+      const qText = data ? data.text : "";
+      const qExplanation = data && data.explanation ? data.explanation : "";
+      const correctIdx = data ? data.correctOption : 0;
+      const options = data ? data.options : ["", "", "", ""];
+
+      const card = document.createElement('div');
+      card.className = "question-card";
+      card.dataset.qid = qId;
+
+      card.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong>Question #${qIndex + 1}</strong>
+          <button type="button" class="btn btn-danger" style="padding:4px 8px; font-size:12px;" onclick="this.parentElement.parentElement.remove()">Remove</button>
+        </div>
+        <label style="margin-top:8px; display:block;">Question Prompt:</label>
+        <input type="text" class="input-field q-text" value="${qText}" placeholder="Enter question..." required />
+
+        <label style="display:block; margin-top: 5px;">Options (Select radio button for the correct answer):</label>
+        <div class="options-container">
+          ${[0, 1, 2, 3].map(i => `
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom: 6px;">
+              <input type="radio" name="correct_${qId}" value="${i}" ${correctIdx === i ? 'checked' : ''} />
+              <input type="text" class="input-field opt-val" style="margin:0;" value="${options[i] || ''}" placeholder="Option ${i + 1}" required />
+            </div>
+          `).join('')}
+        </div>
+
+        <label style="margin-top:8px; display:block;">Explanation (Shown to students after submission):</label>
+        <textarea class="input-field q-exp" rows="2" placeholder="Why is this answer correct?">${qExplanation}</textarea>
+      `;
+
+      container.appendChild(card);
+    }
+
+    async function saveTest() {
+      const id = document.getElementById('testIdInput').value.trim();
+      const title = document.getElementById('testTitleInput').value.trim();
+      const durationMinutes = parseInt(document.getElementById('testDurationInput').value, 10);
+
+      if (!id || !title) return alert("Test ID and Title are required.");
+
+      const questionCards = document.querySelectorAll('.question-card');
+      if (questionCards.length === 0) return alert("You must add at least one question.");
+
+      const questions = [];
+
+      for (const card of questionCards) {
+        const text = card.querySelector('.q-text').value.trim();
+        const explanation = card.querySelector('.q-exp').value.trim();
+        const optInputs = card.querySelectorAll('.opt-val');
+        const options = Array.from(optInputs).map(inp => inp.value.trim());
+
+        const checkedRadio = card.querySelector(`input[name="correct_${card.dataset.qid}"]:checked`);
+        const correctOption = checkedRadio ? parseInt(checkedRadio.value, 10) : 0;
+
+        if (!text || options.some(opt => !opt)) {
+          return alert("Please fill out all question text and option fields.");
+        }
+
+        questions.push({
+          id: card.dataset.qid,
+          text,
+          options,
+          correctOption,
+          explanation
+        });
+      }
+
+      const payload = { id, title, durationMinutes, questions };
+      const endpoint = isEditing ? `/api/admin/tests/${id}` : '/api/admin/tests';
+      const method = isEditing ? 'PUT' : 'POST';
+
+      const res = await fetch(endpoint, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-key': adminKey
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        alert(data.message || "Test saved successfully!");
+        closeEditor();
+        loadTests();
+      } else {
+        alert(data.error);
+      }
+    }
+
+    async function deleteTest(id) {
+      if (!confirm(`Are you sure you want to permanently delete test '${id}'?`)) return;
+
+      const res = await fetch(`/api/admin/tests/${id}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-key': adminKey }
+      });
+      const data = await res.json();
+      alert(data.message || data.error);
+      loadTests();
+    }
+
+    function closeEditor() {
+      document.getElementById('editorCard').classList.add('hidden');
+    }
+  </script>
+</body>
+</html>
